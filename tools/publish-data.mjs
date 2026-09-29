@@ -4,7 +4,7 @@ import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import { fakeSupabase } from '../dev/fake-supabase.mjs';
-import { runSync } from '../sync/sync.mjs';
+import { ADAPTERS, runSync } from '../sync/sync.mjs';
 import { timeoutFetch } from '../sync/http.mjs';
 import { buildMeta, queryShows } from './show-query.mjs';
 
@@ -41,9 +41,12 @@ export async function readSeed({ baseUrl, transport = timeoutFetch() }) {
 
 // fake-supabase 的 builder 在创建时对表内行做引用快照，
 // 所以 seed 必须赶在任何 from() 调用之前落到 _tables 上。
-export function seedStores(shows) {
+// 同时丢弃不在 ADAPTERS 在册的来源行：下线一个来源只需注销适配器，
+// 上一次发布里它的残留数据会在下一次运行时自动从站点消失。
+export function seedStores(shows, liveSources = new Set(ADAPTERS.map((a) => a.source))) {
   const supabase = fakeSupabase();
-  supabase._tables.set('shows', shows.map((r) => ({ ...r })));
+  const kept = shows.filter((r) => liveSources.has(r.source)).map((r) => ({ ...r }));
+  supabase._tables.set('shows', kept);
   return supabase;
 }
 
@@ -65,14 +68,16 @@ export async function runPublish({
   now = () => new Date(),
 } = {}) {
   const outDir = String(out);
+  const liveSources = new Set(ADAPTERS.map((a) => a.source));
   const { shows: seedRows, meta: seedMeta, degraded } = await readSeed({ baseUrl, transport });
+  const kept = seedRows.filter((r) => liveSources.has(r.source));
   if (!scrape && seedMeta) {
-    await buildDist({ webDir, outDir, shows: seedRows, meta: seedMeta });
-    return { ok: true, degraded, counts: { shows: seedRows.length }, degradedFellBack: false };
+    await buildDist({ webDir, outDir, shows: kept, meta: seedMeta });
+    return { ok: true, degraded, counts: { shows: kept.length }, degradedFellBack: false };
   }
   // scrape=false 却读不到线上 meta（Pages 还没首发布或被清空）时退回抓取，
   // 否则一次 push 部署就会把站点数据清空。
-  const supabase = seedStores(seedRows);
+  const supabase = seedStores(kept, liveSources);
   const { results, deleted } = await runSync({ supabase, transport, now });
   const shows = await queryShows(supabase);
   const meta = buildMeta(results, deleted, { workflowUrl, now });

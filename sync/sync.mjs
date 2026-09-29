@@ -1,4 +1,3 @@
-import { fetchDahepiao } from './dahepiao.mjs';
 import { MAITIX_TENANTS, fetchMaitixTenant } from './maitix.mjs';
 import { fetchSnpac } from './snpac.mjs';
 import { timeoutFetch } from './http.mjs';
@@ -11,8 +10,10 @@ const NULL_END_TIME_STALE_DAYS = 30;
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // 新来源在此登记：{ source, run(ctx) => ShowRecord[] }
+// dahepiao 已注销：其西安搜索页返回的是往年已结束演出的历史页（实测 20 条全为 2024 年），
+// 抓回来只会被过期清理立刻删掉、并把解析不出时间的那条留在"即将开演"里。
+// 解析器与用例保留在 dahepiao.mjs（含 buy_url 协议白名单的安全用例），修好取数口径后可直接登记回来。
 export const ADAPTERS = [
-  { source: 'dahepiao', run: (ctx) => fetchDahepiao(ctx) },
   ...MAITIX_TENANTS.map((tenant) => ({
     source: tenant.source,
     run: (ctx) => fetchMaitixTenant(tenant, ctx),

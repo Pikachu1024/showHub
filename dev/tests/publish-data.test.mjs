@@ -6,35 +6,29 @@ import { join } from 'node:path';
 import { readSeed, resolveBaseUrl, runPublish, seedStores } from '../../tools/publish-data.mjs';
 
 const day = (n) => `2026-11-0${n}T11:30:00+08:00`;
-const show = (id, name, start) => ({
-  id: `id-${id}`, source: 'dahepiao', source_id: id, name, city: '西安',
+// 在册来源默认用 snpac；dahepiao 已从 ADAPTERS 注销，用它当「已下线来源」
+const show = (id, name, start, source = 'snpac') => ({
+  id: `id-${id}`, source, source_id: id, name, city: '西安市',
   poster_url: '', start_time: '', start_at: start, end_time: start,
   price: '￥100起', min_price: 100, venue: '剧场', category: '音乐会',
   status: '售票中', buy_url: '', updated_at: start,
 });
 
-// 单个 dahepiao 列表卡片：不足一页（<20 条）即让 fetchDahepiao 停止翻页
-const dahepiaoCard = (name, href, date) => `
-<div class="ycList list-grid flex">
-  <a href="${href}" class="s_left"><img src="https://img/x.jpg"></a>
-  <div class="s_right">
-    <a href="${href}" class="l1 line1">${name}</a>
-    <div class="l2 line1">${date} 周日 19:30</div>
-    <div class="l3 line1">西安测试场馆</div>
-    <div class="l4"><span>售票中</span></div>
-    <div class="l5">￥<em>100</em>起</div>
-  </div>
-</div>`;
-const live = () => dahepiaoCard('活着的演出', 'https://m.dahepiao.com/yanchupiaowu1/1.html', '2026-11-05');
+const snpacItem = (id, name) => ({
+  id, fullCnName: name, extraPoster: 'https://t/1.jpg',
+  startTime: '2026-11-05 19:30:00', endTime: '2026-11-05 21:00:00',
+  minPrice: 100, maxPrice: 100, stadiumName: '西安音乐厅', venueName: '交响大厅',
+  category: '音乐会', saleType: 'sale', stadiumCityCode: '610100', stadiumCityName: '西安市',
+});
 
-// 其余三源返回空列表，使抓取结果只含 dahepiao 一条
-const transportFor = (body) => async (url) => {
+// maitix 两租户返回空列表，使抓取结果只含 snpac 给定的条目
+const transportFor = (data) => async (url) => {
   const u = String(url);
-  if (u.includes('dahepiao.com')) return new Response(body, { status: 200 });
+  if (u.includes('snpac.com')) return Response.json({ success: true, data });
   if (u.includes('maitix.com')) return Response.json({ code: '200', data: { dataList: [], totalPage: 1 } });
-  if (u.includes('snpac.com')) return Response.json({ success: true, data: [] });
   return new Response('not found', { status: 404 });
 };
+const live = () => transportFor([snpacItem(7000, '活着的演出')]);
 
 const tmp = async () => mkdtemp(join(tmpdir(), 'showhub-dist-'));
 const webDir = new URL('../../web/', import.meta.url);
@@ -50,14 +44,14 @@ test('resolveBaseUrl 优先用 BASE_URL，其次由仓库名推导 project Pages
 });
 
 test('readSeed 首跑 404 → 空表 + degraded 原因，不抛错', async () => {
-  const res = await readSeed({ baseUrl: 'https://pika.github.io/showHub', transport: transportFor('') });
+  const res = await readSeed({ baseUrl: 'https://pika.github.io/showHub', transport: transportFor([]) });
   assert.deepEqual(res.shows, []);
   assert.equal(res.meta, null);
   assert.match(res.degraded, /seed_missing/);
 });
 
 test('readSeed 无 baseUrl（本地首跑/预览）→ 同样降级为空表', async () => {
-  const res = await readSeed({ baseUrl: '', transport: transportFor('') });
+  const res = await readSeed({ baseUrl: '', transport: transportFor([]) });
   assert.deepEqual(res.shows, []);
   assert.match(res.degraded, /no_base_url/);
 });
@@ -68,7 +62,7 @@ test('runPublish 清理 seed 中的过期行，导出含 updated_at 与静态资
   const seedTransport = async (url) => {
     if (String(url).endsWith('data/shows.json')) return Response.json({ generated_at: 'x', shows: [stale] });
     if (String(url).endsWith('data/meta.json')) return new Response('nope', { status: 404 });
-    return transportFor(live())(url);
+    return live()(url);
   };
   const res = await runPublish({
     out, baseUrl: 'https://pika.github.io/showHub', scrape: true,
@@ -80,6 +74,23 @@ test('runPublish 清理 seed 中的过期行，导出含 updated_at 与静态资
   assert.equal(res.counts.deleted, 1);
   assert.match(res.degraded, /meta_missing/);
   assert.ok((await readdir(out)).includes('index.html'), 'dist 必须含静态资源');
+});
+
+// 下线一个来源不该只是不再抓：上一次发布里它的旧行也必须从站点消失
+test('runPublish 丢弃 seed 中未在册来源的旧行', async () => {
+  const out = await tmp();
+  const rows = [show('keep', '在册演出', day(6)), show('gone', '已下线来源演出', day(6), 'dahepiao')];
+  const transport = async (url) => {
+    if (String(url).endsWith('data/shows.json')) return Response.json({ generated_at: 'g', shows: rows });
+    if (String(url).endsWith('data/meta.json')) {
+      return Response.json({ generated_at: 'g', lastSuccessAt: 'l', workflowUrl: null, sources: [], cleanup_deleted: 0 });
+    }
+    return live()(url);
+  };
+  await runPublish({ out, baseUrl: 'https://x', scrape: true, transport, webDir, now: () => new Date('2026-11-04T00:00:00+08:00') });
+  const body = JSON.parse(await readFile(join(out, 'data', 'shows.json'), 'utf8'));
+  assert.ok(!body.shows.some((s) => s.source === 'dahepiao'), '已注销来源的残留行不得再出现在站上');
+  assert.deepEqual(body.shows.map((s) => s.name).sort(), ['在册演出', '活着的演出']);
 });
 
 test('runPublish scrape=false 原样透传线上数据，绝不发起抓取', async () => {
@@ -104,7 +115,7 @@ test('runPublish scrape=false 但线上无 meta 时降级为完整抓取，不�
   const out = await tmp();
   const res = await runPublish({
     out, baseUrl: 'https://pika.github.io/showHub', scrape: false,
-    transport: async (url) => (String(url).includes('/data/') ? new Response('gone', { status: 404 }) : transportFor(live())(url)),
+    transport: async (url) => (String(url).includes('/data/') ? new Response('gone', { status: 404 }) : live()(url)),
     webDir,
   });
   assert.equal(res.degradedFellBack, true);
@@ -123,9 +134,10 @@ test('meta.json 写入 workflowUrl 供前端「查看抓取任务」链接', asy
   await runPublish({
     out, baseUrl: 'https://x', scrape: true,
     workflowUrl: 'https://github.com/pika/showHub/actions/workflows/publish.yml',
-    transport: transportFor(live()), webDir,
+    transport: live(), webDir,
   });
   const meta = JSON.parse(await readFile(join(out, 'data', 'meta.json'), 'utf8'));
   assert.equal(meta.workflowUrl, 'https://github.com/pika/showHub/actions/workflows/publish.yml');
-  assert.ok(meta.sources.some((s) => s.source === 'dahepiao' && s.status === 'success'));
+  assert.ok(meta.sources.some((s) => s.source === 'snpac' && s.status === 'success'));
+  assert.equal(meta.sources.length, 3, '在册来源应为三个');
 });

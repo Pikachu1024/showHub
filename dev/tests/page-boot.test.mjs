@@ -155,8 +155,8 @@ test('app.js 执行后不新增全局绑定', async () => {
 });
 
 // 来源标签必须是站点自己的品牌名：
-// m.dahepiao.com <title>=…-大河票务网；dhjc.maitix.com <title>=西演SPACE；
-// xaetys.maitix.com <title>=西安儿艺梦想剧场；www.snpac.com/sxtheatre 由用户指定称"爱乐剧管"。
+// dhjc.maitix.com <title>=西演SPACE；xaetys.maitix.com <title>=西安儿艺梦想剧场；
+// www.snpac.com/sxtheatre 由用户指定称"爱乐剧管"。大河票务网已下线，不再是在册来源。
 test('卡片按来源官方品牌名展示，不自造名字', async () => {
   const mk = (source, day) => ({
     source,
@@ -173,9 +173,8 @@ test('卡片按来源官方品牌名展示，不自造名字', async () => {
   });
   const items = [
     mk('snpac', 3),
-    mk('dahepiao', 4),
-    mk('maitix-dhjc', 1),
     mk('maitix-xaetys', 2),
+    mk('maitix-dhjc', 1),
   ];
   const { els, sandbox } = bootContext({ items });
   vm.runInContext(priceKeySrc, sandbox);
@@ -183,9 +182,9 @@ test('卡片按来源官方品牌名展示，不自造名字', async () => {
   await flush();
 
   const cards = els.get('grid').children;
-  assert.equal(cards.length, 4, '四张来源卡片应全部渲染');
+  assert.equal(cards.length, 3, '三张来源卡片应全部渲染');
   const labels = cards.map((c) => c.querySelector('.source').textContent);
-  assert.deepEqual(labels, ['西演SPACE', '西安儿艺梦想剧场', '爱乐剧管', '大河票务网']);
+  assert.deepEqual(labels, ['西演SPACE', '西安儿艺梦想剧场', '爱乐剧管']);
 });
 
 // meta.json 的 error 文本源自远端响应，属不可信内容：只能经 textContent 落屏。
@@ -196,7 +195,7 @@ test('概览面板逐源展示抓取结果，失败原因不被当作 HTML 解�
     workflowUrl: WORKFLOW_URL,
     cleanup_deleted: 3,
     sources: [
-      { source: 'dahepiao', status: 'error', finished_at: '2026-11-04T00:00:00+08:00', fetched: 0, inserted: 0, updated: 0, deleted: 0, error: '<img src=x onerror=alert(1)>' },
+      { source: 'snpac', status: 'error', finished_at: '2026-11-04T00:00:00+08:00', fetched: 0, inserted: 0, updated: 0, deleted: 0, error: '<img src=x onerror=alert(1)>' },
       { source: 'maitix-dhjc', status: 'success', finished_at: '2026-11-04T00:00:00+08:00', fetched: 12, inserted: 2, updated: 10, deleted: 0, error: '' },
     ],
   };
@@ -207,10 +206,12 @@ test('概览面板逐源展示抓取结果，失败原因不被当作 HTML 解�
 
   const rowNodes = els.get('syncRows').children;
   const rows = rowNodes.map((n) => n.textContent);
-  assert.ok(rows.some((t) => t.startsWith('大河票务网 ✗')), `失败源应以 ✗ 开头：${JSON.stringify(rows)}`);
+  // 面板行数就是在册来源数：dahepiao 下线后不应再留一行「无抓取记录」
+  assert.equal(rowNodes.length, 3, `面板应 3 行，实际：${JSON.stringify(rows)}`);
+  assert.ok(rows.some((t) => t.startsWith('爱乐剧管 ✗')), `失败源应以 ✗ 开头：${JSON.stringify(rows)}`);
   assert.ok(rows.some((t) => t.startsWith('西演SPACE 抓取 12')), `成功源应展示抓取数：${JSON.stringify(rows)}`);
   // 注入载荷必须原样落在 textContent 上：一旦改走 innerHTML 就会解析出子节点
-  assert.ok(rows.includes('大河票务网 ✗ 失败：<img src=x onerror=alert(1)>'), '错误文本应原样保留而非被丢弃');
+  assert.ok(rows.includes('爱乐剧管 ✗ 失败：<img src=x onerror=alert(1)>'), '错误文本应原样保留而非被丢弃');
   for (const n of rowNodes) assert.equal(n.children.length, 0, '面板行内不得解析出子节点');
   assert.equal(els.get('syncCleanup').textContent, '上次清理过期演出 3 条');
   assert.match(els.get('footer').textContent, /数据更新于/);

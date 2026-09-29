@@ -1,8 +1,10 @@
 # 西安演出集（showHub）
 
-聚合西安四个票务来源的在售演出：大河票务网、西演SPACE、西安儿艺梦想剧场、爱乐剧管（陕西大剧院/西安音乐厅）。
+聚合西安三个票务来源的在售演出：西演SPACE、西安儿艺梦想剧场、爱乐剧管（陕西大剧院/西安音乐厅）。
 
-静态站 + 定时抓取：页面本身是纯静态资源，数据由 GitHub Actions 每隔 6 小时抓取四个来源后写成 JSON 一并发布。
+大河票务网已下线：它的西安搜索页返回的是往年已结束演出的历史页（实测 20 条全是 2024 年的场次），抓回来只会被过期清理立刻删掉。解析器与用例保留在 `sync/dahepiao.mjs`，改好取数口径后在 `sync/sync.mjs` 的 `ADAPTERS` 里登记即可恢复。
+
+静态站 + 定时抓取：页面本身是纯静态资源，数据由 GitHub Actions 每隔 6 小时抓取各来源后写成 JSON 一并发布。
 
 ## 数据与陈旧度
 
@@ -20,13 +22,13 @@
 
 1. 页面顶部「▾」概览面板里该源显示 `✗ 失败：<原因>`，原因文本来自抓取侧，已截断到 100 字符。
 2. 或直接看 `https://<owner>.github.io/<repo>/data/meta.json` 的 `sources[].error`。
-3. 抓取侧的超时统一为 15 秒（`sync/http.mjs`），失败不影响其它来源发布——单次运行里四个来源彼此隔离。
+3. 抓取侧的超时统一为 15 秒（`sync/http.mjs`），失败不影响其它来源发布——单次运行里各来源彼此隔离。
 4. Actions 日志首行会打印 `event=<触发来源> args=<实际参数> baseUrl=<回读地址>`，用于确认定时任务是否真的执行了抓取。
 
 ## 本地开发
 
 ```bash
-node tools/publish-data.mjs --out dist     # 真实抓取四源站并生成产物
+node tools/publish-data.mjs --out dist     # 真实抓取在册源站并生成产物
 node dev/preview-server.mjs 5173 dist      # 静态服务产物，等价于线上站点
 node --test dev/tests/*.test.mjs           # 全部测试（无依赖，无 package.json）
 ```
@@ -37,7 +39,7 @@ node --test dev/tests/*.test.mjs           # 全部测试（无依赖，无 pack
 
 ```
 web/     静态页（无构建、无框架、经典脚本）
-sync/    四个来源的抓取适配器 + runSync（Node 直跑，无需任何 secret）
+sync/    三个在册来源的抓取适配器 + runSync（Node 直跑，无需任何 secret）
 tools/   静态导出：回读 seed → runSync → 导出 JSON → 组装 dist
 dev/     内存数据库实现、静态预览服务、fixtures 与测试
 .github/ publish.yml：定时抓取并发布 Pages

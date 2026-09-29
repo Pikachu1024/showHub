@@ -6,10 +6,10 @@
 
   const { priceKeyOf, sortShows } = globalThis.ShowHubPrice;
 
-  // 名称取自各站点自身：m.dahepiao.com 标题「大河票务网」、dhjc.maitix.com 标题「西演SPACE」、
-  // xaetys.maitix.com 标题「西安儿艺梦想剧场」；snpac.com（陕西大剧院/西安音乐厅自营）按用户口径称「爱乐剧管」。
+  // 名称取自各站点自身：dhjc.maitix.com 标题「西演SPACE」、xaetys.maitix.com 标题「西安儿艺梦想剧场」；
+  // snpac.com（陕西大剧院/西安音乐厅自营）按用户口径称「爱乐剧管」。
+  // 顺序即概览面板的行顺序，与 sync/sync.mjs 的 ADAPTERS 保持一致。
   const SOURCE_LABELS = {
-    dahepiao: '大河票务网',
     'maitix-dhjc': '西演SPACE',
     'maitix-xaetys': '西安儿艺梦想剧场',
     snpac: '爱乐剧管',
