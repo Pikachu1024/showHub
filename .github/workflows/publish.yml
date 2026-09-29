@@ -1,0 +1,76 @@
+name: publish
+
+on:
+  schedule:
+    # GitHub cron 按 UTC 解释：00/06/12/18 → 北京 08/14/20/02
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      scrape:
+        description: '重新抓取源站（关闭则复用线上数据，仅重新发布静态资源）'
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'sync/**'
+      - 'tools/**'
+      - 'dev/**'
+      - '.github/workflows/publish.yml'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 定时与手动撞车时排队执行：cancel-in-progress 会让后一次部署掐掉前一次的产物上传
+concurrency:
+  group: publish-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # base-url 输出站点根地址，供脚本回读上一次发布的数据（数据不进 git 历史）
+      - uses: actions/configure-pages@v5
+        id: pages
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 抓取并生成静态产物
+        env:
+          BASE_URL: ${{ steps.pages.outputs.base-url }}
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/workflows/publish.yml
+          EVENT: ${{ github.event_name }}
+          SCRAPE_INPUT: ${{ inputs.scrape }}
+        run: |
+          # 只在 push（改代码不改数据）和手动显式关闭 scrape 时透传线上数据。
+          # 事件名与输入都用字面串比较：schedule 下 inputs.scrape 渲染为空串，
+          # 若写成 inputs.scrape == false 则 null 与 false 的比较语义不确定，
+          # 误判会让定时任务静默退化成不抓取。
+          ARGS="--out dist"
+          if [ "$EVENT" = "push" ] || { [ "$EVENT" = "workflow_dispatch" ] && [ "$SCRAPE_INPUT" = "false" ]; }; then
+            ARGS="$ARGS --skip-scrape"
+          fi
+          echo "event=$EVENT args=$ARGS baseUrl=${BASE_URL:-<empty>}"
+          node tools/publish-data.mjs $ARGS
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

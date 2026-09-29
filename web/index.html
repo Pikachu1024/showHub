@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>西安演出集</title>
+  <meta name="description" content="聚合大河票务网、西演SPACE、西安儿艺梦想剧场、爱乐剧管的西安演出信息。">
+  <!-- 海报直连第三方票务 CDN：发送本站 Referer 会被防盗链拒绝，故整页不发 Referer -->
+  <meta name="referrer" content="no-referrer">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>西安演出集</h1>
+    <p class="subtitle">西安正在售票的演出，聚合自大河票务网 · 西演SPACE · 西安儿艺梦想剧场 · 爱乐剧管</p>
+    <div class="sync-row">
+      <a id="syncBtn" class="sync-btn" target="_blank" rel="noopener noreferrer" hidden>查看抓取任务</a>
+      <button id="syncToggle" class="sync-toggle" type="button" hidden aria-expanded="true" aria-controls="syncPanel">▾</button>
+    </div>
+    <section id="syncPanel" class="sync-panel" hidden aria-live="polite">
+      <p class="sync-line">数据由定时任务每 6 小时自动抓取，不支持手动刷新。</p>
+      <div id="syncRows" class="sync-rows"></div>
+      <p id="syncCleanup" class="sync-line" hidden></p>
+      <p id="syncTime" class="sync-line" hidden></p>
+    </section>
+  </header>
+  <nav id="filters" class="filters" aria-label="筛选">
+    <input id="searchInput" class="search" type="search" aria-label="搜索演出" placeholder="搜索演出名称、场馆或分类">
+    <div id="categoryFilters" class="chip-group" role="group" aria-label="分类"></div>
+    <div class="chip-group" role="group" aria-label="售票状态">
+      <button class="chip active" data-status="upcoming">即将开演</button>
+      <button class="chip" data-status="ended">已结束</button>
+      <button class="chip" id="freeChip" type="button" aria-pressed="false" title="免费与价格待定的演出">免费</button>
+    </div>
+  </nav>
+  <p id="count" class="count" aria-live="polite"></p>
+  <main id="grid" class="grid" aria-live="polite"></main>
+  <p id="empty" class="empty hidden">没有符合条件的演出</p>
+  <footer id="footer" class="footer">数据加载中…</footer>
+  <template id="card-template">
+    <article class="card">
+      <a class="poster" target="_blank" rel="noopener noreferrer">
+        <img loading="lazy" alt="">
+        <span class="badge"></span>
+      </a>
+      <div class="info">
+        <h2 class="name"></h2>
+        <p class="row time"></p>
+        <p class="row venue"></p>
+        <p class="row price"></p>
+        <div class="meta">
+          <span class="tag category"></span>
+          <span class="tag source"></span>
+          <a class="buy" target="_blank" rel="noopener noreferrer">购票</a>
+        </div>
+      </div>
+    </article>
+  </template>
+  <script src="price-key.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
