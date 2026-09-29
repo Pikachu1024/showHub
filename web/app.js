@@ -111,8 +111,8 @@
     if (!state.meta) { el.textContent = ''; return; }
     const time = state.meta.lastSuccessAt ? new Date(state.meta.lastSuccessAt).toLocaleString('zh-CN') : '尚未同步';
     const parts = (state.meta.sources || [])
-      .filter((s) => s.source !== 'cleanup')
-      .map((s) => `${SOURCE_LABELS[s.source] || s.source} ${s.status === 'success' ? '✓' : '✗'}`);
+      .filter((s) => s.source in SOURCE_LABELS)
+      .map((s) => `${SOURCE_LABELS[s.source]} ${s.status === 'success' ? '✓' : '✗'}`);
     el.textContent = `数据更新于 ${time} · ${parts.join(' · ')}`;
   }
 

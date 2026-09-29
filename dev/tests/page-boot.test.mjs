@@ -226,3 +226,26 @@ test('meta 无 workflowUrl 时不展示抓取任务链接，页脚退回尚未�
   assert.equal(els.get('syncBtn').hidden, true);
   assert.match(els.get('footer').textContent, /尚未同步/);
 });
+
+// 透传发布（push 触发）沿用线上旧 meta，其中可能带着已下线来源的记录；
+// 页脚只应列在册来源，否则会出现「面板 3 行、页脚 4 个来源」的自相矛盾。
+test('页脚忽略 meta 里已下线来源的旧记录', async () => {
+  const meta = {
+    generated_at: '2026-11-04T00:00:00+08:00',
+    lastSuccessAt: '2026-11-04T00:00:00+08:00',
+    workflowUrl: WORKFLOW_URL,
+    cleanup_deleted: 0,
+    sources: [
+      { source: 'dahepiao', status: 'success', finished_at: 'x', fetched: 20, inserted: 0, updated: 20, deleted: 0, error: '' },
+      { source: 'snpac', status: 'success', finished_at: 'x', fetched: 51, inserted: 0, updated: 51, deleted: 0, error: '' },
+    ],
+  };
+  const { els, sandbox } = bootContext({ meta });
+  vm.runInContext(priceKeySrc, sandbox);
+  vm.runInContext(appSrc, sandbox);
+  await flush();
+  const footer = els.get('footer').textContent;
+  // 断言用原始 key：标签表里已无 dahepiao，未过滤时页脚会直接吐出 "dahepiao ✓"
+  assert.ok(!footer.includes('dahepiao'), `页脚不应再列已下线来源：${footer}`);
+  assert.ok(footer.includes('爱乐剧管'), `在册来源应保留：${footer}`);
+});
