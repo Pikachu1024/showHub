@@ -49,6 +49,9 @@ jobs:
           WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/workflows/publish.yml
           EVENT: ${{ github.event_name }}
           SCRAPE_INPUT: ${{ inputs.scrape }}
+          # 免费演出微信推送（WxPusher）。缺失时 notify 自行跳过，不影响发布
+          WXPUSHER_APP_TOKEN: ${{ secrets.WXPUSHER_APP_TOKEN }}
+          WXPUSHER_UIDS: ${{ secrets.WXPUSHER_UIDS }}
         run: |
           # 只在 push（改代码不改数据）和手动显式关闭 scrape 时透传线上数据。
           # 事件名与输入都用字面串比较：schedule 下 inputs.scrape 渲染为空串，

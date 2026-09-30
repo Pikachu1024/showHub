@@ -25,6 +25,34 @@
 3. 抓取侧的超时统一为 15 秒（`sync/http.mjs`），失败不影响其它来源发布——单次运行里各来源彼此隔离。
 4. Actions 日志首行会打印 `event=<触发来源> args=<实际参数> baseUrl=<回读地址>`，用于确认定时任务是否真的执行了抓取。
 
+## 免费演出微信推送（WxPusher）
+
+每次**抓取**发布后，`tools/notify.mjs` 拿本次数据与线上上一次发布的数据做差集（按 `source + source_id`），把「新出现 + 免费档 + 未售罄」的演出合成一条 Markdown 消息推到微信。
+
+以下情况一律不推，且都只在日志里说明原因，**绝不影响站点发布**（`runNotify` 吞掉一切异常返回状态）：
+
+- 未配置凭据、或本次没有符合条件的新增演出；
+- 读不到线上数据当基线（Pages 首发布 / 线上被清空）——否则会把全量上百条当新增推出去；
+- `--skip-scrape` 的发布（push 改代码走这条分支：数据没变，推过去只会是重复消息）；
+- 新增的免费场次已全部售罄（惠民票常在开票几小时内抢光，推了也是白跑，站点上仍能看到）。
+
+一次性配置（只需做一次）：
+
+1. 微信关注 **WxPusher** 公众号 → 打开 <https://wxpusher.zjiecode.com/admin/> 用同一微信登录 → 创建一个**标准推送应用**，拿到 `AT_` 开头的 appToken。
+2. 在该应用的详情页扫码**订阅自己的应用**（未订阅时接口顶层返回成功、但目标码是 `1001 未订阅应用`，脚本据此判为失败）。
+3. 公众号 → 我的信息，拿到 `UID_` 开头的用户 ID。多人接收时用逗号把 UID 串起来。
+4. GitHub 仓库 → Settings → Secrets and variables → Actions → 新建两个 repository secret：`WXPUSHER_APP_TOKEN`、`WXPUSHER_UIDS`。工作流已把这两个 secret 注入抓取任务，无需改 yml。
+
+本地验证（凭据只走环境变量，不进仓库）：
+
+```bash
+WXPUSHER_APP_TOKEN=AT_xxx WXPUSHER_UIDS=UID_xxx node tools/notify.mjs --test  # 真发一条测试消息
+node tools/notify.mjs preview                    # 离线复演：本地产物 vs 线上数据，只打印将要推的内容
+node tools/notify.mjs preview dist               # 同上，指定产物目录
+```
+
+`--test` 返回 `推送失败（wxpusher_not_delivered ... 1001 ...）` 基本就是没订阅应用或 UID 抄错；日志里的 `AT_/UID_` 值都会被脱敏成 `***` 再打印，Actions 日志同理。
+
 ## 本地开发
 
 ```bash
@@ -40,7 +68,7 @@ node --test dev/tests/*.test.mjs           # 全部测试（无依赖，无 pack
 ```
 web/     静态页（无构建、无框架、经典脚本）
 sync/    三个在册来源的抓取适配器 + runSync（Node 直跑，无需任何 secret）
-tools/   静态导出：回读 seed → runSync → 导出 JSON → 组装 dist
+tools/   静态导出：回读 seed → runSync → 导出 JSON → 组装 dist → 推送新增免费演出
 dev/     内存数据库实现、静态预览服务、fixtures 与测试
 .github/ publish.yml：定时抓取并发布 Pages
 ```

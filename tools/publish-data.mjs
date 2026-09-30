@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fakeSupabase } from '../dev/fake-supabase.mjs';
 import { ADAPTERS, runSync } from '../sync/sync.mjs';
 import { timeoutFetch } from '../sync/http.mjs';
+import { describeNotify, runNotify } from './notify.mjs';
 import { buildMeta, queryShows } from './show-query.mjs';
 
 export function resolveBaseUrl(env = process.env) {
@@ -66,6 +67,7 @@ export async function runPublish({
   workflowUrl = null,
   webDir = new URL('../web/', import.meta.url),
   now = () => new Date(),
+  notify = {},
 } = {}) {
   const outDir = String(out);
   const liveSources = new Set(ADAPTERS.map((a) => a.source));
@@ -73,7 +75,8 @@ export async function runPublish({
   const kept = seedRows.filter((r) => liveSources.has(r.source));
   if (!scrape && seedMeta) {
     await buildDist({ webDir, outDir, shows: kept, meta: seedMeta });
-    return { ok: true, degraded, counts: { shows: kept.length }, degradedFellBack: false };
+    // push 部署走的是这个分支：代码变了、数据没变，推过去的只会是重复消息
+    return { ok: true, degraded, counts: { shows: kept.length }, degradedFellBack: false, notify: null };
   }
   // scrape=false 却读不到线上 meta（Pages 还没首发布或被清空）时退回抓取，
   // 否则一次 push 部署就会把站点数据清空。
@@ -82,11 +85,21 @@ export async function runPublish({
   const shows = await queryShows(supabase);
   const meta = buildMeta(results, deleted, { workflowUrl, now });
   await buildDist({ webDir, outDir, shows, meta });
+  // 产物已落地才推送：放在 buildDist 之前会让「消息已发、站点没更新」成为可能，
+  // 而 runNotify 内部吞掉一切异常，推送结果永远不会影响发布成败。
+  const notifyResult = await runNotify({
+    transport,
+    ...notify,
+    seedRows: kept,
+    shows,
+    siteUrl: notify.siteUrl ?? baseUrl,
+  });
   return {
     ok: true,
     degraded: scrape ? degraded : `${degraded ?? ''},fallback_scrape`.replace(/^,/, ''),
     counts: { shows: shows.length, deleted },
     degradedFellBack: !scrape,
+    notify: notifyResult,
   };
 }
 
@@ -106,6 +119,7 @@ if (isCli) {
       workflowUrl: process.env.WORKFLOW_URL ?? null,
     });
     console.log(`[publish-data] shows=${res.counts.shows} deleted=${res.counts.deleted ?? 0} degraded=${res.degraded ?? 'none'} fellBack=${res.degradedFellBack}`);
+    if (res.notify) console.log(`[publish-data] ${describeNotify(res.notify)}`);
     const meta = JSON.parse(await readFile(join(out, 'data', 'meta.json'), 'utf8'));
     for (const s of meta.sources.filter((r) => r.status !== 'success')) console.warn(`[publish-data] ${s.source} ${s.status}: ${s.error}`);
   } catch (e) {
