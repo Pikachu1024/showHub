@@ -1,4 +1,4 @@
-// 新增免费演出的微信推送（WxPusher）。在 runPublish 生成产物之后调用：
+// 新增免费演出的微信推送（Server酱·Turbo）。在 runPublish 生成产物之后调用：
 // 与上一次发布的数据做差集，把「本次新出现 + 免费档 + 仍可抢票」的演出合并成一条消息发出。
 //
 // 全局契约：推送失败绝不影响站点发布。runNotify 捕获一切异常、只返回状态，
@@ -8,15 +8,12 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { timeoutFetch } from '../sync/http.mjs';
 
-export const WXPUSHER_ENDPOINT = 'https://wxpusher.zjiecode.com/api/send/message';
+// Turbo 的 SendKey（SCT 开头）走这个固定端点；Server酱³ 的 sctp key 是另一套端点，本站不用
+export const sendKeyEndpoint = (sendKey) => `https://sctapi.ftqq.com/${encodeURIComponent(sendKey)}.send`;
 
-// WxPusher 业务成功码。顶层 code 只代表「请求被受理」，data[] 每个接收目标各带一个 code
-// 才代表「这条真的投递给了该用户」——只查顶层会把「用户未订阅」当成推送成功。
-const OK_CODE = 1000;
-// contentType：1 纯文本、2 HTML、3 Markdown
-const CONTENT_TYPE_MARKDOWN = 3;
-const SUMMARY_MAX = 100;
 const MAX_LISTED = 8;
+// title 上限 32 字符且不能含换行（换行会被服务端判为「包含特殊字符」）
+const TITLE_MAX = 32;
 
 // 站点免费口径（web/app.js 的 isFree）在服务端的对齐实现：
 // 「免费」与「价格待定」同档，判据是 priceKeyOf === 0。
@@ -59,17 +56,18 @@ function showWhen(show) {
   return m ? `${m[1]} ${m[2]}` : '时间待定';
 }
 
+// Server酱 的正文按 Markdown 渲染，单个换行不分段——每行都得出一个空行
 function showBlock(show, siteUrl) {
   const lines = [`**${mdEscape(show.name) || '（未命名演出）'}**`];
-  lines.push(`- 时间：${mdEscape(showWhen(show))}`);
+  lines.push(`时间：${mdEscape(showWhen(show))}`);
   const venue = [show.venue, show.city].filter((v) => String(v ?? '').trim()).map(mdEscape);
-  if (venue.length) lines.push(`- 地点：${venue.join(' · ')}`);
-  lines.push(`- 票价：${mdEscape(show.price) || '免费/暂无价格'}`);
+  if (venue.length) lines.push(`地点：${venue.join(' · ')}`);
+  lines.push(`票价：${mdEscape(show.price) || '免费/暂无价格'}`);
   // buy_url 由各适配器做过协议白名单，但推送里只放 http(s) 兜底一手
   const url = String(show.buy_url ?? '');
-  if (/^https?:\/\//i.test(url)) lines.push(`- [购票入口](${url})`);
-  else if (siteUrl) lines.push(`- [查看详情](${siteUrl})`);
-  return lines.join('\n');
+  if (/^https?:\/\//i.test(url)) lines.push(`[购票入口](${url})`);
+  else if (siteUrl) lines.push(`[查看详情](${siteUrl})`);
+  return lines.join('\n\n');
 }
 
 export function buildMessage({ newShows, siteUrl }) {
@@ -77,56 +75,49 @@ export function buildMessage({ newShows, siteUrl }) {
   const listed = free.slice(0, MAX_LISTED).map((s) => showBlock(s, siteUrl));
   const rest = free.length - listed.length;
   if (rest > 0) listed.push(`…另有 ${rest} 场，见站点「免费」筛选`);
-  // 微信会话列表显示的是 summary（title 不参与接口），所以标题文案放这里
-  const summary = `西安免费演出 +${free.length}`.slice(0, SUMMARY_MAX);
-  const content = [
+  if (siteUrl) listed.push(`[进入站点](${siteUrl})`);
+  const title = `西安免费演出 +${free.length}`.slice(0, TITLE_MAX);
+  const desp = [
     `#### 新增 ${free.length} 场免费演出`,
-    siteUrl ? `[进入站点](${siteUrl})` : '',
     ...listed,
-    '---',
     `同步于 ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC｜showHub`,
-  ]
-    .filter(Boolean)
-    .join('\n\n');
-  return { summary, content, free, omitted: rest };
+  ].join('\n\n');
+  return { title, desp, free, omitted: rest };
 }
 
-// 服务端返回的用户标识不进入日志：CI 日志是仓库协作者可见的。
-const redact = (s) => String(s).replace(/(UID|AT|SPT)_[A-Za-z0-9]+/g, '$1_***');
+// 服务端回显的用户标识不进入日志：CI 日志是仓库协作者可见的。
+const redact = (s) => String(s).replace(/(SCT|sctp|UID|AT|SPT)_[A-Za-z0-9]+/g, '$1_***');
 
-export async function sendWxPusher({
-  appToken,
-  uids,
-  summary,
-  content,
-  url = '',
-  endpoint = WXPUSHER_ENDPOINT,
+export async function sendServerChan({
+  sendKey,
+  title,
+  desp,
+  endpoint = sendKeyEndpoint(sendKey),
   transport = timeoutFetch(),
 }) {
-  const payload = { appToken, content, summary, contentType: CONTENT_TYPE_MARKDOWN, uids };
-  if (url) payload.url = url;
   const res = await transport(endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ title, desp }),
   });
   const body = await res.json().catch(() => null);
-  if (!res.ok || !body || body.code !== OK_CODE) {
+  // code 是「请求是否被受理」，data.error 才是「通道是否真的投递」——
+  // 只看 code 会把「未关注服务号」这类情况当成推送成功（WxPusher 上踩过一次）
+  const channelError = body?.data?.error;
+  if (!res.ok || !body || body.code !== 0) {
     throw new Error(
-      `wxpusher_send_rejected status=${res.status} code=${body ? body.code : 'none'} msg=${redact(String((body && body.msg) || '')).slice(0, 120)}`,
+      `serverchan_send_rejected status=${res.status} code=${body ? body.code : 'none'} message=${redact(String((body && body.message) || '')).slice(0, 120)}`,
     );
   }
-  const targets = Array.isArray(body.data) ? body.data : [];
-  const failed = targets.filter((t) => !t || t.code !== OK_CODE);
-  if (!targets.length || failed.length) {
-    const why = failed.map((t) => `${t ? t.code : 'none'}:${redact((t && t.status) || '')}`).join(' | ');
-    throw new Error(`wxpusher_not_delivered ok=${targets.length - failed.length}/${targets.length} ${why.slice(0, 160)}`);
+  if (channelError && channelError !== 'SUCCESS') {
+    throw new Error(`serverchan_not_delivered ${redact(channelError).slice(0, 160)}`);
   }
-  return { messageContentId: targets[0].messageContentId ?? null };
+  return { pushid: body.data?.pushid ?? null };
 }
 
-// uidList 支持逗号/空格分隔，便于一个 secret 推给多人
-export function parseUids(raw) {
+// 多个接收者：逗号/空格分隔的 SendKey 串。Server酱 免费版不支持群发（会员的
+// 抄送也只覆盖测试号与企业微信通道），所以逐个发送——每人各自计自己的日额度。
+export function parseSendKeys(raw) {
   return String(raw ?? '')
     .split(/[,\s]+/)
     .map((s) => s.trim())
@@ -138,22 +129,28 @@ export async function runNotify({
   seedRows,
   shows,
   siteUrl = '',
-  appToken = process.env.WXPUSHER_APP_TOKEN ?? '',
-  uidsRaw = process.env.WXPUSHER_UIDS ?? '',
+  sendKey = process.env.SERVERCHAN_SENDKEY ?? '',
   transport = timeoutFetch(),
-  endpoint = WXPUSHER_ENDPOINT,
 }) {
   try {
-    if (!appToken) return { status: 'skipped', reason: 'no_app_token' };
-    const uids = parseUids(uidsRaw);
-    if (!uids.length) return { status: 'skipped', reason: 'no_uids' };
+    const keys = parseSendKeys(sendKey);
+    if (!keys.length) return { status: 'skipped', reason: 'no_send_key' };
     const newShows = diffNewShows(seedRows, shows);
     if (newShows === null) return { status: 'skipped', reason: 'no_baseline' };
     const free = newShows.filter(isPushableFreeShow);
     if (!free.length) return { status: 'skipped', reason: 'no_new_free', count: newShows.length };
-    const { summary, content } = buildMessage({ newShows, siteUrl });
-    const sent = await sendWxPusher({ appToken, uids, summary, content, url: siteUrl, transport, endpoint });
-    return { status: 'sent', count: free.length, newCount: newShows.length, messageContentId: sent.messageContentId };
+    const { title, desp } = buildMessage({ newShows, siteUrl });
+    // 逐个接收者独立成败：某个 key 失效或额度用尽，不该让已收到的人那边算失败
+    const failed = [];
+    for (const key of keys) {
+      try {
+        await sendServerChan({ sendKey: key, title, desp, transport });
+      } catch (e) {
+        failed.push(redact(String((e && e.message) || e)).slice(0, 120));
+      }
+    }
+    if (failed.length === keys.length) return { status: 'failed', error: failed.join(' ; '), count: free.length };
+    return { status: 'sent', count: free.length, newCount: newShows.length, delivered: keys.length - failed.length, failed };
   } catch (e) {
     return { status: 'failed', error: redact(String((e && e.message) || e)).slice(0, 200) };
   }
@@ -162,12 +159,14 @@ export async function runNotify({
 // 供 runPublish 调用：把推送状态翻成人话，并保证任何失败都只是日志
 export function describeNotify(result) {
   if (result.status === 'sent') {
-    return `notify: 已推送 ${result.count} 场新增免费演出（本次共新增 ${result.newCount} 条）`;
+    // 单接收者不报人数，多接收者或有失败时才说清「几个人收到了」
+    const people = result.delivered > 1 || result.failed?.length ? ` → ${result.delivered} 人` : '';
+    const base = `notify: 已推送 ${result.count} 场新增免费演出${people}（本次共新增 ${result.newCount} 条）`;
+    return result.failed?.length ? `${base}；${result.failed.length} 个接收者失败：${result.failed[0]}` : base;
   }
   if (result.status === 'failed') return `notify: 推送失败（${result.error}）`;
   const why = {
-    no_app_token: '未配置 WXPUSHER_APP_TOKEN',
-    no_uids: '未配置 WXPUSHER_UIDS',
+    no_send_key: '未配置 SERVERCHAN_SENDKEY',
     no_baseline: '缺上次发布数据作基线',
     no_new_free: '无新增免费演出',
   };
@@ -193,7 +192,7 @@ if (isCli) {
   const argv = process.argv.slice(2);
   const mode = argv.includes('--test') ? 'test' : argv[0] ?? 'preview';
   if (mode === 'test') {
-    // 验证 appToken / UID / 订阅关系是否接通：发一条固定文本，不读站点数据
+    // 验证 SendKey 与关注关系是否接通：发一条固定文本，不读站点数据
     const r = await runNotify({
       seedRows: [{ source: 'snpac', source_id: 'seed' }],
       shows: [
@@ -216,8 +215,8 @@ if (isCli) {
     const free = (newShows ?? []).filter(isPushableFreeShow);
     console.log(`[notify] 新增 ${newShows?.length ?? 0} 条，其中可推送免费档 ${free.length} 条`);
     if (free.length) {
-      const { summary, content } = buildMessage({ newShows, siteUrl: DEFAULT_SITE_URL });
-      console.log(`--- summary: ${summary}\n${content}`);
+      const { title, desp } = buildMessage({ newShows, siteUrl: DEFAULT_SITE_URL });
+      console.log(`--- title: ${title}\n${desp}`);
     }
   }
 }
